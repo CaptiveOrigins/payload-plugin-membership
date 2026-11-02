@@ -1,7 +1,7 @@
 {
   "name": "@captiveorigins/payload-plugin-membership",
   "version": "0.1.0",
-  "description": "Memberships for Payload: Patreon-style tiers or pick-your-own-amount pledges to categories, billed as Stripe subscriptions, with a backers wall and hooks for perks. Works with @captiveorigins/payload-plugin-sponsor.",
+  "description": "Memberships for Payload: Patreon-style tiers or pick-your-own-amount pledges to categories, billed as Stripe subscriptions, with a backers wall and hooks for perks. Works with @captiveorigins/payload-plugin-sponsors.",
   "keywords": ["payload", "payload-plugin", "payloadcms", "membership", "memberships", "patreon", "subscriptions", "stripe", "donations", "nonprofit"],
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/mgilardi/payload-plugin-membership.git" },

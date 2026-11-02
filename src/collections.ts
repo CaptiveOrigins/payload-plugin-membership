@@ -62,7 +62,7 @@ export function tiersCollection(o: ResolvedMembership): CollectionConfig {
         name: 'sponsorListing',
         label: 'Members are listed as sponsors',
         type: 'checkbox',
-        admin: { position: 'sidebar', description: 'A perk your site can act on in onStatusChange (e.g. with payload-plugin-sponsor).' },
+        admin: { position: 'sidebar', description: 'A perk your site can act on in onStatusChange (e.g. with payload-plugin-sponsors).' },
       },
       // Stripe product for this tier/category (created on first checkout; prices are set per member).
       { name: 'stripeProduct', type: 'text', access: { read: managerField, create: managerField, update: managerField }, admin: { position: 'sidebar', readOnly: true } },

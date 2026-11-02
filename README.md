@@ -15,7 +15,7 @@ Patreon, or let members support **categories** with **their own amount** — or 
   invoice: award perks, votes, credits, receipts.
 - **Backers wall**: opt-in only, with the name the member chooses; listed under their tier or under each
   category they support, **A–Z within each group**.
-- **Works with** [`@captiveorigins/payload-plugin-sponsor`](https://www.npmjs.com/package/@captiveorigins/payload-plugin-sponsor):
+- **Works with** [`@captiveorigins/payload-plugin-sponsors`](https://www.npmjs.com/package/@captiveorigins/payload-plugin-sponsors):
   mark a tier "Members are listed as sponsors" and call `upsertListing`/`retireListing` from `onStatusChange`.
 
 ## Install
