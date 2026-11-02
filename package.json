@@ -1,0 +1,38 @@
+{
+  "name": "@captiveorigins/payload-plugin-membership",
+  "version": "0.1.0",
+  "description": "Memberships for Payload: Patreon-style tiers or pick-your-own-amount pledges to categories, billed as Stripe subscriptions, with a backers wall and hooks for perks. Works with @captiveorigins/payload-plugin-sponsor.",
+  "keywords": ["payload", "payload-plugin", "payloadcms", "membership", "memberships", "patreon", "subscriptions", "stripe", "donations", "nonprofit"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/mgilardi/payload-plugin-membership.git" },
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20.9" },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "stripe": "^23.1.0"
+  },
+  "peerDependencies": {
+    "payload": "^3.80.0"
+  },
+  "devDependencies": {
+    "@payloadcms/db-mongodb": "3.92.1",
+    "@types/node": "^24.0.0",
+    "graphql": "^16.14.2",
+    "mongodb-memory-server": "^11.3.0",
+    "payload": "3.92.1",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
