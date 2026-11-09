@@ -60,6 +60,6 @@
     "mongodb-memory-server": "^11.3.0",
     "payload": "3.92.1",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^5.1.0"
   }
 }
