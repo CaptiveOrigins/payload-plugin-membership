@@ -26,7 +26,7 @@ Patreon, or let members support **categories** with **their own amount** — or 
 
 - **Sponsors** (`@captiveorigins/payload-plugin-sponsors`): tick "Members are listed as sponsors" on a tier, and call Sponsors' `upsertListing()` and `retireListing()` from `onStatusChange`. Your site makes the call; neither plugin imports the other.
 - **Roadmap** (`@captiveorigins/payload-plugin-roadmap`): Roadmap's extra votes come from a number your site works out (`allocation.earned`), and a membership can be where they come from. There's no adapter for this. It's a few lines of your own code.
-- **Multi-tenant** (`@payloadcms/plugin-multi-tenant`): set `scopeField` and `scopeOf`, and each site has its own tiers and members.
+- **Multi-tenant** (`@payloadcms/plugin-multi-tenant`): set `scopeField` and `scopeOf`, and each site has its own tiers and members. The member endpoints answer only for the site `scopeOf` names: another site's membership, or a request from a site `scopeOf` doesn't know, gets a 404. Managers also need the collection's read access, so the tenant plugin's rules apply to them. Pass `scope` to `getBackers`, or it lists every site.
 
 **Family.** Membership is in the Patronage family, with Sponsors, Backing, Credits, Printify and Roadmap. Backing and Credits are named but not built yet, and the families are a working draft that may change.
 

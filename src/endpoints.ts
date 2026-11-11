@@ -12,15 +12,29 @@ const origin = (req: PayloadRequest) => membershipOf(req.payload).publicURL ?? r
 /** Same-site paths only. */
 const path = (p: unknown, fallback: string) => (typeof p === 'string' && /^\/(?!\/)/.test(p) ? p : fallback)
 
-/** The member's own membership, or any for managers. */
+const idOf = (v: unknown) => (v && typeof v === 'object' ? String((v as { id: unknown }).id) : v ? String(v) : null)
+
+/**
+ * The member's own membership, or one a manager may read, on this request's site only.
+ * Managers go through the collection's read access (so a multi-tenant host's tenant rules
+ * apply); with `scopeField` and `scopeOf`, a membership from another site, or asked for from
+ * an unknown site, is not found.
+ */
 async function ownMembership(req: PayloadRequest) {
   const o = membershipOf(req.payload)
   if (!req.user) return null
   const id = String(req.routeParams?.id ?? '')
-  const m = await req.payload.findByID({ collection: o.memberships as CollectionSlug, id, depth: 0, overrideAccess: true, disableErrors: true })
+  const collection = o.memberships as CollectionSlug
+  const m = await req.payload.findByID({ collection, id, depth: 0, overrideAccess: true, disableErrors: true })
   if (!m) return null
-  const owner = String(typeof m.user === 'object' ? (m.user as { id: unknown }).id : m.user)
-  return owner === String(req.user.id) || (await o.canManage({ req })) ? m : null
+  if (o.scopeField && o.scopeOf) {
+    const here = await o.scopeOf(req)
+    if (here == null || idOf((m as Record<string, unknown>)[o.scopeField]) !== String(here)) return null
+  }
+  if (idOf(m.user) === String(req.user.id)) return m
+  if (!(await o.canManage({ req }))) return null
+  const visible = await req.payload.count({ collection, where: { id: { equals: m.id } }, overrideAccess: false, user: req.user, req })
+  return visible.totalDocs > 0 ? m : null
 }
 
 /** POST /api/<memberships>/checkout { tier? | pledges?, interval, wall?, successPath?, cancelPath? } → { url } */
