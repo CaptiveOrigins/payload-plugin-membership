@@ -2,7 +2,7 @@ import { mongooseAdapter } from '@payloadcms/db-mongodb'
 import { multiTenantPlugin } from '@payloadcms/plugin-multi-tenant'
 import { MongoMemoryReplSet } from 'mongodb-memory-server'
 import { buildConfig, getPayload, handleEndpoints, type Payload, type PayloadRequest, type Plugin } from 'payload'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { getBackers, membershipPlugin, type PaymentRecord } from '../src/index.js'
 import { fakeStripe } from './fake-stripe.js'
@@ -78,7 +78,13 @@ beforeAll(async () => {
           stripe,
           webhookSecret: 'whsec_test',
           scopeField: 'tenant',
-          scopeOf: (req: PayloadRequest) => sites.get(req.headers.get('x-site') ?? '') ?? null,
+          scopeOf: (req: PayloadRequest) => {
+            const site = req.headers.get('x-site') ?? ''
+            // Made-up failing lookups: one throws, one rejects.
+            if (site === 'throws') throw new TypeError('made-up lookup failure for site-secret.example')
+            if (site === 'rejects') return Promise.reject(new RangeError('made-up lookup failure for site-secret.example'))
+            return sites.get(site) ?? null
+          },
           // Role-based on purpose: the host's canManage need not know about sites.
           canManage: ({ req }) => ['manager', 'admin'].includes(String((req.user as Doc | null)?.role)),
           onPayment: ({ payment }) => void payments.push(payment),
@@ -224,6 +230,41 @@ describe('member endpoints', () => {
       expect((await rest('POST', `/memberships/${membershipA.id}/${action}`, memberA, { body })).status, `${action} with no site`).toBe(404)
     }
     expect(calls.slice(before)).toEqual([])
+  })
+
+  it('treat a throw or rejection from scopeOf as no site: 404, never a 500, nothing changed, only the error’s name logged', async () => {
+    const warn = vi.spyOn(payload.logger, 'warn')
+    try {
+      const before = calls.length
+      const was = await get('memberships', membershipA.id)
+      for (const site of ['throws', 'rejects'])
+        for (const user of [memberA, managerA])
+          for (const [action, body] of ACTIONS) {
+            const res = await rest('POST', `/memberships/${membershipA.id}/${action}`, user, { site, body })
+            expect(res, `${action} by ${user.email} when scopeOf ${site}`).toMatchObject({ status: 404, body: { error: 'Not found.' } })
+          }
+      expect(calls.slice(before)).toEqual([])
+      const after = await get('memberships', membershipA.id)
+      expect([after.wall, after.cancelAtPeriodEnd ?? false, after.tier, after.updatedAt]).toEqual([was.wall, was.cancelAtPeriodEnd ?? false, was.tier, was.updatedAt])
+      const logged = warn.mock.calls.map((c) => JSON.stringify(c))
+      expect(logged.some((l) => l.includes('TypeError'))).toBe(true)
+      expect(logged.some((l) => l.includes('RangeError'))).toBe(true)
+      expect(logged.filter((l) => l.includes('made-up lookup failure') || l.includes('site-secret'))).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('checkout treats a throw from scopeOf as no site: never a 500, nothing created', async () => {
+    const stranger = (await payload.create({ collection: 'users', data: { email: 'stranger@example.com', password: PASSWORD, role: 'member', tenants: [{ tenant: siteA }] } as never })) as Doc
+    const before = calls.length
+    for (const site of ['throws', 'rejects']) {
+      const res = await rest('POST', '/memberships/checkout', stranger, { site, body: { tier: String(tierA.id), interval: 'month' } })
+      expect(res.status, site).toBeGreaterThanOrEqual(400)
+      expect(res.status, site).toBeLessThan(500)
+    }
+    expect((await payload.count({ collection: 'memberships' as never, where: { user: { equals: stranger.id } } })).totalDocs).toBe(0)
+    expect(calls.slice(before).filter((c) => c.what === 'checkout')).toEqual([])
   })
 
   it('still serve the owner and their own site’s manager', async () => {

@@ -2,6 +2,15 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-11: a throw from `scopeOf` is no site
+
+Suite: 43 tests before, 45 after. Closes the gap the entry below left for the lead.
+
+- **The gap.** In the member endpoints (change, cancel, portal, wall), a throw from the host's `scopeOf` escaped as a 500. In checkout it became a 500 through the catch-all.
+- **The change.** `siteOf` in `src/endpoints.ts` calls `scopeOf`; a throw or rejection counts as no site, so the member endpoints answer 404 "Not found." (as for an unknown site, which doesn't reveal that the membership exists) and checkout refuses as it does for an unknown site. Only the error's name is logged, never its message.
+- **Tests.** `multi-tenant.test.ts > member endpoints > treat a throw or rejection from scopeOf as no site…` (owner and manager, all four actions, a throwing and a rejecting `scopeOf`: 404 each, no Stripe call, membership unchanged, the log has the error's name and none of its message) and `> checkout treats a throw from scopeOf as no site…` (4xx, nothing created, no Stripe checkout).
+- **Mutation checks.** 4 mutations, restored byte for byte (SHA-256): member endpoints calling `scopeOf` directly, checkout calling it directly, `siteOf` rethrowing, and logging the message instead of the name. All 4 fail the suite.
+
 ## 2026-11-11: only an exact `true` passes, everywhere
 
 Suite: 40 tests before, 43 after (`npx vitest run`, real Payload, in-memory MongoDB, fake Stripe). Prompted by an access-control sweep across the plugins; the fix follows payload-plugin-sponsors.

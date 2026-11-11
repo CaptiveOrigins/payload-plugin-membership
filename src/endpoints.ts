@@ -13,6 +13,22 @@ const origin = (req: PayloadRequest) => membershipOf(req.payload).publicURL ?? r
 /** Same-site paths only. */
 const path = (p: unknown, fallback: string) => (typeof p === 'string' && /^\/(?!\/)/.test(p) ? p : fallback)
 
+/**
+ * The request's site, from `scopeOf`. A throw or rejection counts as no site, so the caller
+ * refuses as it would for an unknown site. Only the error's name is logged: its message could
+ * carry the host's request details.
+ */
+async function siteOf(req: PayloadRequest): Promise<string | null> {
+  const o = membershipOf(req.payload)
+  if (!o.scopeOf) return null
+  try {
+    return await o.scopeOf(req)
+  } catch (err) {
+    req.payload.logger.warn(`Membership: scopeOf failed (${err instanceof Error ? err.name : typeof err}); treated as no site`)
+    return null
+  }
+}
+
 const idOf = (v: unknown) => (v && typeof v === 'object' ? String((v as { id: unknown }).id) : v ? String(v) : null)
 
 /**
@@ -29,7 +45,7 @@ async function ownMembership(req: PayloadRequest) {
   const m = await req.payload.findByID({ collection, id, depth: 0, overrideAccess: true, disableErrors: true })
   if (!m) return null
   if (o.scopeField && o.scopeOf) {
-    const here = await o.scopeOf(req)
+    const here = await siteOf(req)
     if (here == null || idOf((m as Record<string, unknown>)[o.scopeField]) !== String(here)) return null
   }
   if (idOf(m.user) === String(req.user.id)) return m
@@ -54,7 +70,7 @@ export const checkoutEndpoint: Endpoint = {
         pledges: Array.isArray(b.pledges) ? b.pledges : null,
         interval: b.interval,
         wall: b.wall,
-        scope: o.scopeOf ? await o.scopeOf(req) : null,
+        scope: await siteOf(req),
         successURL: `${base}${path(b.successPath, '/')}`,
         cancelURL: `${base}${path(b.cancelPath, '/')}`,
       })
