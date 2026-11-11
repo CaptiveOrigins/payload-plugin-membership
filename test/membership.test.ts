@@ -4,36 +4,16 @@ import { buildConfig, getPayload, type Payload } from 'payload'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { webhookEndpoint } from '../src/endpoints.js'
-import { cancelMembership, changeMembership, getBackers, handleStripeEvent, membershipPlugin, myMembership, startCheckout, type PaymentRecord, type StripeLike } from '../src/index.js'
+import { cancelMembership, changeMembership, getBackers, handleStripeEvent, membershipPlugin, myMembership, startCheckout, type PaymentRecord } from '../src/index.js'
+import { fakeStripe } from './fake-stripe.js'
 
 type Doc = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 let payload: Payload
 let mongo: MongoMemoryReplSet
 
 // A fake Stripe that records calls.
-const calls: { what: string; params: Doc }[] = []
+const { stripe, calls, subs } = fakeStripe()
 let n = 0
-const subs = new Map<string, Doc>()
-const stripe: StripeLike = {
-  products: { create: async (params) => (calls.push({ what: 'product', params }), { id: `prod_${++n}` }) },
-  checkout: { sessions: { create: async (params) => (calls.push({ what: 'checkout', params }), { id: `cs_${++n}`, url: `https://checkout.example/${n}` }) } },
-  billingPortal: { sessions: { create: async (params) => (calls.push({ what: 'portal', params }), { url: `https://portal.example/${String(params.customer)}` }) } },
-  subscriptions: {
-    retrieve: async (id) => subs.get(id) as never,
-    update: async (id, params) => {
-      calls.push({ what: 'update', params: { id, ...params } })
-      const s = { ...subs.get(id)!, ...(params.cancel_at_period_end !== undefined ? { cancel_at_period_end: params.cancel_at_period_end } : {}) }
-      subs.set(id, s)
-      return s as never
-    },
-  },
-  webhooks: {
-    constructEvent: (raw, sig) => {
-      if (sig !== 'good') throw new Error('bad signature')
-      return JSON.parse(raw)
-    },
-  },
-}
 const payments: PaymentRecord[] = []
 const statusChanges: string[] = []
 

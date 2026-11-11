@@ -227,9 +227,15 @@ export async function handleStripeEvent(payload: Payload, event: StripeEvent): P
           data: { membership: m.id, user: idOf(m.user), amount: obj.amount_paid, currency: obj.currency ?? m.currency, paidAt, invoiceId: obj.id, tier: idOf(m.tier), pledges, ...(o.scopeField && m[o.scopeField] ? { [o.scopeField]: idOf(m[o.scopeField]) } : {}) } as never,
           overrideAccess: true,
           context: ctx,
+          // One document, kept unique by the invoiceId index; no transaction needed. Inside one,
+          // a multi-tenant host's relationship checks run in parallel and Mongo aborts them.
+          disableTransaction: true,
         })) as Doc
-      } catch {
-        return 'ignored' // the same invoice arrived twice at once (unique invoiceId)
+      } catch (err) {
+        // The same invoice arrived twice at once: the unique invoiceId let the other copy record it.
+        const recorded = await payload.count({ collection: o.payments as CollectionSlug, where: { invoiceId: { equals: obj.id } }, overrideAccess: true })
+        if (recorded.totalDocs) return 'ignored'
+        throw err // anything else (or the other copy not committed yet): fail, so Stripe retries
       }
       const periodEnd = obj.lines?.data?.[0]?.period?.end as number | undefined
       const updated = await setMembership(payload, o, m, {
