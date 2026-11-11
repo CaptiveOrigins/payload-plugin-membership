@@ -17,7 +17,7 @@ const subs = new Map<string, Doc>()
 const stripe: StripeLike = {
   products: { create: async (params) => (calls.push({ what: 'product', params }), { id: `prod_${++n}` }) },
   checkout: { sessions: { create: async (params) => (calls.push({ what: 'checkout', params }), { id: `cs_${++n}`, url: `https://checkout.example/${n}` }) } },
-  billingPortal: { sessions: { create: async (params) => ({ url: `https://portal.example/${String(params.customer)}` }) } },
+  billingPortal: { sessions: { create: async (params) => (calls.push({ what: 'portal', params }), { url: `https://portal.example/${String(params.customer)}` }) } },
   subscriptions: {
     retrieve: async (id) => subs.get(id) as never,
     update: async (id, params) => {
@@ -189,5 +189,136 @@ describe('webhook endpoint', () => {
     const ok = await call('good', event('invoice.payment_failed', { subscription: 'sub_bob' }))
     expect(await ok.json()).toMatchObject({ received: true, result: 'handled' })
     expect((await myMembership(payload, String(bob.id)))).toMatchObject({ status: 'past_due' })
+  })
+})
+
+describe('access and refusals', () => {
+  const asUser = (u: Doc) => ({ ...u, collection: 'users' })
+  const ep = (path: string) => (payload.collections['memberships' as never]!.config.endpoints as { path: string; handler: (req: never) => Promise<Response> }[]).find((e) => e.path === path)!
+  const hit = (path: string, user: Doc | null, opts: { id?: string; body?: Doc } = {}) =>
+    ep(path).handler({ payload, user: user ? asUser(user) : null, routeParams: opts.id ? { id: opts.id } : {}, json: async () => opts.body ?? {}, headers: new Headers() } as never)
+  const o = () => payload.config.custom!.membership as Doc
+  let mallory: Doc
+  let admin: Doc
+
+  beforeAll(async () => {
+    mallory = await payload.create({ collection: 'users', data: { email: 'mallory@example.org', password: 'a-long-password' } as never })
+    admin = await payload.create({ collection: 'users', data: { email: 'manager@example.org', password: 'a-long-password', role: 'admin' } as never })
+  })
+
+  it('member endpoints refuse anyone but the owner or a manager, without saying the membership exists', async () => {
+    const bobs = (await myMembership(payload, String(bob.id)))!
+    expect((await hit('/checkout', null, { body: { tier: friend.id, interval: 'month' } })).status).toBe(401)
+    for (const path of ['/:id/change', '/:id/cancel', '/:id/portal', '/:id/wall']) {
+      expect((await hit(path, null, { id: String(bobs.id) })).status).toBe(404)
+      expect((await hit(path, mallory, { id: String(bobs.id) })).status).toBe(404)
+    }
+    const portal = await hit('/:id/portal', admin, { id: String(bobs.id) })
+    expect(portal.status).toBe(200)
+    expect(await portal.json()).toEqual({ url: `https://portal.example/cus_${bob.id}` })
+  })
+
+  it('return links stay on this site', async () => {
+    const bobs = (await myMembership(payload, String(bob.id)))!
+    const before = calls.length
+    const r = await hit('/:id/portal', bob, { id: String(bobs.id), body: { returnPath: '//evil.example/x' } })
+    expect(await r.json()).toEqual({ url: `https://portal.example/cus_${bob.id}` })
+    expect(calls.at(-1)).toMatchObject({ what: 'portal', params: { return_url: 'https://example.org/' } })
+    const dave = await payload.create({ collection: 'users', data: { email: 'dave@example.org', password: 'a-long-password' } as never })
+    const res = await hit('/checkout', dave, { body: { tier: String(friend.id), interval: 'month', successPath: '//evil.example/x', cancelPath: 'https://evil.example/y' } })
+    expect(res.status).toBe(200)
+    const session = calls.slice(before).find((c) => c.what === 'checkout')!.params
+    expect(session).toMatchObject({ success_url: 'https://example.org/', cancel_url: 'https://example.org/' })
+  })
+
+  it('the wall endpoint shows a member only with a name they chose', async () => {
+    const bobs = (await myMembership(payload, String(bob.id)))!
+    expect(await (await hit('/:id/wall', bob, { id: String(bobs.id), body: { show: true, name: '   ' } })).json()).toEqual({ wall: { show: false, name: null } })
+    const long = 'x'.repeat(200)
+    expect(await (await hit('/:id/wall', bob, { id: String(bobs.id), body: { show: true, name: long } })).json()).toEqual({ wall: { show: true, name: 'x'.repeat(80) } })
+  })
+
+  it('refuses closed or unpriced tiers, bad intervals, inactive categories, and checkout when switched off', async () => {
+    const erin = await payload.create({ collection: 'users', data: { email: 'erin@example.org', password: 'a-long-password' } as never })
+    const closed = await payload.create({ collection: 'membership-tiers' as never, data: { name: 'Closed', monthly: 900, active: false } as never })
+    const hidden = await payload.create({ collection: 'membership-categories' as never, data: { name: 'Hidden', active: false } as never })
+    const tryIt = (args: Doc) => startCheckout(payload, { user: erin, ...urls, interval: 'month', ...args } as never).then(() => 'ok', (e: Error) => e.message)
+    expect(await tryIt({ tier: String(closed.id) })).toMatch(/isn’t available/)
+    expect(await tryIt({ tier: String(gold.id), interval: 'year' })).toMatch(/isn’t available/) // Gold has no yearly price
+    expect(await tryIt({ tier: String(friend.id), interval: 'week' })).toMatch(/monthly or yearly/)
+    expect(await tryIt({ pledges: [{ category: String(hidden.id), amount: 1000 }] })).toMatch(/isn’t available/)
+    expect(await tryIt({ pledges: [{ category: String(snakes.id), amount: 49 }] })).toMatch(/minimum for Snakes is 1\.00/)
+    const prev = o().canCheckout
+    o().canCheckout = () => false
+    try {
+      expect(await tryIt({ tier: String(friend.id) })).toMatch(/not available/)
+    } finally {
+      o().canCheckout = prev
+    }
+  })
+
+  it('only a running membership can be changed', async () => {
+    const alices = (await payload.find({ collection: 'memberships' as never, where: { user: { equals: alice.id } }, sort: '-createdAt', limit: 1 })).docs[0] as Doc
+    expect(alices.status).toBe('canceled')
+    await expect(changeMembership(payload, String(alices.id), { tier: String(friend.id) })).rejects.toThrow(/Only a running membership/)
+  })
+
+  it('tiers and categories: anyone reads, only managers write, and Stripe products stay hidden', async () => {
+    for (const collection of ['membership-tiers', 'membership-categories']) {
+      await expect(payload.create({ collection: collection as never, data: { name: 'Nope' } as never, overrideAccess: false })).rejects.toThrow()
+      await expect(payload.create({ collection: collection as never, data: { name: 'Nope' } as never, overrideAccess: false, user: asUser(mallory) })).rejects.toThrow()
+      const pub = await payload.find({ collection: collection as never, overrideAccess: false })
+      expect(pub.totalDocs).toBeGreaterThan(0)
+      expect(JSON.stringify(pub.docs)).not.toContain('prod_')
+      const managed = await payload.find({ collection: collection as never, overrideAccess: false, user: asUser(admin) })
+      expect(JSON.stringify(managed.docs)).toContain('prod_')
+    }
+    await expect(payload.create({ collection: 'membership-tiers' as never, data: { name: 'Patron', monthly: 10000 } as never, overrideAccess: false, user: asUser(admin) })).resolves.toBeTruthy()
+  })
+
+  it('nobody creates memberships or payments directly; members update neither and read only their own payments', async () => {
+    await expect(payload.create({ collection: 'memberships' as never, data: { user: mallory.id, kind: 'tier', interval: 'month', amount: 1, currency: 'usd' } as never, overrideAccess: false, user: asUser(admin) })).rejects.toThrow()
+    await expect(payload.create({ collection: 'membership-payments' as never, data: { membership: 'x', user: mallory.id, amount: 1, currency: 'usd', paidAt: new Date().toISOString(), invoiceId: 'in_fake' } as never, overrideAccess: false, user: asUser(admin) })).rejects.toThrow()
+    const bobs = (await myMembership(payload, String(bob.id)))!
+    await expect(payload.update({ collection: 'memberships' as never, id: bobs.id, data: { amount: 1 } as never, overrideAccess: false, user: asUser(bob) })).rejects.toThrow()
+    const pay = (await payload.find({ collection: 'membership-payments' as never, limit: 1 })).docs[0] as Doc
+    await expect(payload.update({ collection: 'membership-payments' as never, id: pay.id, data: { amount: 1 } as never, overrideAccess: false, user: asUser(admin) })).rejects.toThrow()
+    const malloryPays = await payload.find({ collection: 'membership-payments' as never, overrideAccess: false, user: asUser(mallory) })
+    expect(malloryPays.totalDocs).toBe(0)
+    const bobPays = await payload.find({ collection: 'membership-payments' as never, overrideAccess: false, user: asUser(bob) })
+    expect(bobPays.totalDocs).toBeGreaterThan(0)
+    expect(bobPays.docs.every((d: Doc) => String(typeof d.user === 'object' ? d.user.id : d.user) === String(bob.id))).toBe(true)
+    await expect(payload.find({ collection: 'membership-payments' as never, overrideAccess: false })).rejects.toThrow()
+  })
+
+  it('ignores free invoices and unknown subscriptions, and refuses webhooks when not configured', async () => {
+    const before = payments.length
+    expect(await handleStripeEvent(payload, event('invoice.paid', { id: 'in_free', subscription: 'sub_bob', amount_paid: 0 }))).toBe('ignored')
+    expect(await handleStripeEvent(payload, event('invoice.paid', { id: 'in_x', subscription: 'sub_unknown', amount_paid: 500 }))).toBe('ignored')
+    expect(await handleStripeEvent(payload, event('customer.subscription.updated', { id: 'sub_unknown', status: 'active' }))).toBe('ignored')
+    expect(payments).toHaveLength(before)
+    const secret = o().webhookSecret
+    o().webhookSecret = undefined
+    try {
+      const res = await webhookEndpoint.handler({ payload, headers: new Headers({ 'stripe-signature': 'good' }), text: async () => '{}' } as never)
+      expect(res.status).toBe(503)
+    } finally {
+      o().webhookSecret = secret
+    }
+  })
+
+  it('the backers wall leaves out members who did not opt in or are not active', async () => {
+    const dave = (await payload.find({ collection: 'users', where: { email: { equals: 'dave@example.org' } } })).docs[0] as Doc
+    const m = (await payload.find({ collection: 'memberships' as never, where: { user: { equals: dave.id } } })).docs[0] as Doc
+    await payload.update({ collection: 'memberships' as never, id: m.id, data: { wall: { show: false, name: 'Dave Private' } } as never })
+    subs.set('sub_dave', { id: 'sub_dave', status: 'active', customer: 'cus_d', items: { data: [] } })
+    await handleStripeEvent(payload, event('checkout.session.completed', { mode: 'subscription', metadata: { membership: String(m.id) }, subscription: 'sub_dave', customer: 'cus_d' }))
+    expect((await payload.findByID({ collection: 'memberships' as never, id: m.id })) as Doc).toMatchObject({ status: 'active' })
+    const wall = await getBackers(payload)
+    const names = [...wall.tiers, ...wall.categories].flatMap((g) => g.backers.map((b) => b.name))
+    expect(names).not.toContain('Dave Private') // active, not opted in
+    expect(names).not.toContain('Alice A.') // opted in, canceled
+    expect(names).not.toContain('x'.repeat(80)) // opted in, past due since the webhook-endpoint test
+    expect(names).toContain('Aaron (Carol)')
   })
 })
