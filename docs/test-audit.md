@@ -2,6 +2,16 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-11: only an exact `true` passes, everywhere
+
+Suite: 40 tests before, 43 after (`npx vitest run`, real Payload, in-memory MongoDB, fake Stripe). Prompted by an access-control sweep across the plugins; the fix follows payload-plugin-sponsors.
+
+- **The gap.** Every manager check was `Boolean(req.user) && await canManage(...)`, which handed `canManage`'s answer straight to Payload as collection and field access (tiers, categories, memberships and payments writes; `stripeProduct`, `stripe` and `notes`). An object answer is read by Payload as a query, and a truthy value like `1` as a yes. Memberships' and payments' `ownOrManager`, the member endpoints' manager check and `canCheckout` all accepted any truthy answer. A throw from `canManage` in the member endpoints escaped as a 500.
+- **The change.** One helper, `src/access.ts`: `exactlyTrue` (only `true` passes; a throw or rejection is `false`), `isManager` (signed in, and `canManage` answered exactly `true`) and `checkoutAllowed` (no `canCheckout`, or exactly `true`). Every check uses them. Members' reads still get the plugin's own `{ user: { equals: id } }` query.
+- **Tests.** "only an exact yes from canManage or canCheckout": each of `1`, `'yes'`, `{}`, a query-shaped object (`{ user: { exists: true } }`, which matches every row), a thrown error and a rejected promise, then `true`. Collection and field access (no writes, no `stripeProduct`, `stripe` or `notes`, a member reads only their own rows and a manager none, nothing changed; signed out is a no even with `true`). Member endpoints (404 for each, never a 500, no Stripe call; with `true`, 200). Checkout (503 "not available", never a 500, no Stripe call, no membership created; with `true`, 200).
+- **Mutation checks.** 15 mutations, each a Python string replace on the file, restored byte for byte (checked by SHA-256). All 15 fail the suite: truthy passing in `exactlyTrue`; errors rethrown; `isManager` without its sign-in check; truthy `canCheckout` passing; the old truthy check put back at each of the four `manager`, three `managerField` and two `ownOrManager` guards, the member endpoints and `startCheckout`.
+- **Skipped.** Access set by a host through `overrides` is the host's own rule. A throw from `scopeOf` in the member endpoints still escapes as a 500; it's a site lookup, not an access answer, and is left for the lead.
+
 ## 2026-11-10: the two gaps left for the lead
 
 Suite before: 19 tests. After: 40. The fake Stripe moved to `test/fake-stripe.ts` so all three files share it. `@payloadcms/plugin-multi-tenant` is an exact-pinned devDependency at 3.92.1, the same as `payload`. No real Stripe calls.

@@ -1,5 +1,6 @@
 import type { CollectionSlug, Endpoint, PayloadRequest } from 'payload'
 
+import { isManager } from './access.js'
 import { cancelMembership, changeMembership, handleStripeEvent, membershipOf, portalLink, startCheckout } from './api.js'
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
@@ -32,7 +33,7 @@ async function ownMembership(req: PayloadRequest) {
     if (here == null || idOf((m as Record<string, unknown>)[o.scopeField]) !== String(here)) return null
   }
   if (idOf(m.user) === String(req.user.id)) return m
-  if (!(await o.canManage({ req }))) return null
+  if (!(await isManager(o, req))) return null
   const visible = await req.payload.count({ collection, where: { id: { equals: m.id } }, overrideAccess: false, user: req.user, req })
   return visible.totalDocs > 0 ? m : null
 }

@@ -1,6 +1,7 @@
 import type { Access, CollectionBeforeChangeHook, CollectionConfig, FieldAccess, Where } from 'payload'
 import { generateKeyBetween } from 'payload/shared'
 
+import { isManager } from './access.js'
 import type { ResolvedMembership } from './types.js'
 
 const idOf = (v: unknown) => (v && typeof v === 'object' ? String((v as { id: unknown }).id) : v ? String(v) : null)
@@ -37,8 +38,9 @@ const money = (name: string, label: string, description: string) =>
   ({ name, label, type: 'number' as const, min: 0, admin: { description: `${description} In cents (e.g. 500 = 5.00).` } })
 
 export function tiersCollection(o: ResolvedMembership): CollectionConfig {
-  const manager: Access = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
-  const managerField: FieldAccess = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
+  // Only an exact `true` from `canManage` makes a manager; a truthy value or a thrown error is a no.
+  const manager: Access = ({ req }) => isManager(o, req)
+  const managerField: FieldAccess = ({ req }) => isManager(o, req)
   return {
     slug: o.tiers,
     labels: { singular: 'Membership tier', plural: 'Membership tiers' },
@@ -72,8 +74,9 @@ export function tiersCollection(o: ResolvedMembership): CollectionConfig {
 }
 
 export function categoriesCollection(o: ResolvedMembership): CollectionConfig {
-  const manager: Access = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
-  const managerField: FieldAccess = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
+  // Only an exact `true` from `canManage` makes a manager; a truthy value or a thrown error is a no.
+  const manager: Access = ({ req }) => isManager(o, req)
+  const managerField: FieldAccess = ({ req }) => isManager(o, req)
   return {
     slug: o.categories,
     labels: { singular: 'Membership category', plural: 'Membership categories' },
@@ -106,11 +109,13 @@ export function categoriesCollection(o: ResolvedMembership): CollectionConfig {
 }
 
 export function membershipsCollection(o: ResolvedMembership): CollectionConfig {
-  const manager: Access = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
-  const managerField: FieldAccess = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
+  // Only an exact `true` from `canManage` makes a manager; a truthy value or a thrown error is a no.
+  const manager: Access = ({ req }) => isManager(o, req)
+  const managerField: FieldAccess = ({ req }) => isManager(o, req)
+  // Managers read all; members read their own (the plugin's own query, never the site's answer).
   const ownOrManager: Access = async ({ req }) => {
     if (!req.user) return false
-    if (await o.canManage({ req })) return true
+    if (await isManager(o, req)) return true
     return { user: { equals: req.user.id } } satisfies Where
   }
   const nobody = () => false
@@ -217,10 +222,12 @@ export function membershipsCollection(o: ResolvedMembership): CollectionConfig {
 }
 
 export function paymentsCollection(o: ResolvedMembership): CollectionConfig {
-  const manager: Access = async ({ req }) => Boolean(req.user) && (await o.canManage({ req }))
+  // Only an exact `true` from `canManage` makes a manager; a truthy value or a thrown error is a no.
+  const manager: Access = ({ req }) => isManager(o, req)
+  // Managers read all; members read their own (the plugin's own query, never the site's answer).
   const ownOrManager: Access = async ({ req }) => {
     if (!req.user) return false
-    if (await o.canManage({ req })) return true
+    if (await isManager(o, req)) return true
     return { user: { equals: req.user.id } } satisfies Where
   }
   return {

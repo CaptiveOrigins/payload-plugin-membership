@@ -60,9 +60,9 @@ export type MembershipPluginOptions = {
   slugs?: { tiers?: string; categories?: string; memberships?: string; payments?: string }
   /** The auth collection of members. Default: `admin.user` of your config. */
   users?: string
-  /** Who manages tiers, categories and memberships in the admin. */
+  /** Who manages tiers, categories and memberships in the admin. Only `true` counts; anything else, or a throw, is a no. */
   canManage?: CanManage
-  /** May members start or change memberships here right now (e.g. off in development)? Default: always. */
+  /** May members start memberships here right now (e.g. off in development)? Default: always. Only `true` allows it. */
   canCheckout?: (args: { payload: Payload }) => boolean | Promise<boolean>
   /** Stripe secret key (`sk_…`/`rk_…`), or a ready client. Without either, checkout is off. */
   stripeSecretKey?: string

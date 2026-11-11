@@ -76,8 +76,8 @@ Amounts are in cents. Server code can call `startCheckout`, `changeMembership`, 
 |---|---|---|
 | `slugs` | `membership-tiers`, `membership-categories`, `memberships`, `membership-payments` | |
 | `users` | `admin.user` | The members' auth collection |
-| `canManage` | nobody | Who manages tiers, categories and memberships in the admin |
-| `canCheckout` | always | E.g. off in development |
+| `canManage` | nobody | Who manages tiers, categories and memberships in the admin. Only `true` counts: see [Access](#access) |
+| `canCheckout` | always | E.g. off in development. Only `true` allows a checkout |
 | `stripeSecretKey` / `stripe` | | Key, or a ready client (tests) |
 | `webhookSecret` | | Signing secret of the webhook endpoint |
 | `currency` | `usd` | |
@@ -86,6 +86,33 @@ Amounts are in cents. Server code can call `startCheckout`, `changeMembership`, 
 | `onPayment` | | Once per paid invoice |
 | `onStatusChange` | | When a membership's status changes |
 | `overrides` | | Adjust the generated collections |
+
+## Access
+
+`canManage` decides everything a manager can do, and only an answer of exactly `true` counts.
+Anything else is a no: `false`, `1`, `'yes'`, an object, or an error thrown or rejected. An error
+doesn't escape as a 500; the request is refused. Nobody who isn't signed in is a manager, whatever
+`canManage` says.
+
+| Where | A manager | A signed-in member | Signed out |
+|---|---|---|---|
+| Tiers, categories | Reads, creates, edits, deletes | Reads | Reads |
+| Their `stripeProduct` (field) | Reads and writes | Never sees it | Never sees it |
+| Memberships | Reads all, edits, deletes | Reads their own | Nothing |
+| A membership's `stripe` and `notes` (fields) | Reads and writes | Never sees them | Nothing |
+| Payments | Reads all, deletes | Reads their own | Nothing |
+| `change`, `cancel`, `portal`, `wall` endpoints | Any membership on their site | Their own | 404 |
+
+Nobody creates memberships or payments directly: checkout and Stripe do. The member endpoints answer
+404, not 403, to anyone who may not use them, so they don't say whether a membership exists.
+
+Memberships' and payments' read access returns a query for members: the plugin's own "your rows"
+filter. What `canManage` returns is never passed to Payload, so an object that looks like a query
+can't widen it to every row. `canCheckout` follows the same rule: only `true` lets a checkout start,
+and anything else, an error included, refuses it with "Memberships are not available here yet."
+(503).
+
+`overrides` can change a collection's `access`; if you do, your rules replace these.
 
 ## License
 

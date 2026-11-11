@@ -302,3 +302,131 @@ describe('access and refusals', () => {
     expect(names).toContain('Aaron (Carol)')
   })
 })
+
+describe('only an exact yes from canManage or canCheckout (2026-11-11)', () => {
+  const asUser = (u: Doc) => ({ ...u, collection: 'users' })
+  const o = () => payload.config.custom!.membership as Doc
+  const ep = (path: string) => (payload.collections['memberships' as never]!.config.endpoints as { path: string; handler: (req: never) => Promise<Response> }[]).find((e) => e.path === path)!
+  const hit = (path: string, user: Doc | null, opts: { id?: string; body?: Doc } = {}) =>
+    ep(path).handler({ payload, user: user ? asUser(user) : null, routeParams: opts.id ? { id: opts.id } : {}, json: async () => opts.body ?? {}, headers: new Headers() } as never)
+  // Each a no: truthy values, objects (one shaped like a query that matches every row), and errors.
+  const noes: [string, () => unknown][] = [
+    ['1', () => 1],
+    ["'yes'", () => 'yes'],
+    ['{}', () => ({})],
+    ['a query-shaped object', () => ({ user: { exists: true } })],
+    ['a thrown error', () => {
+      throw new Error('directory down')
+    }],
+    ['a rejected promise', async () => {
+      throw new Error('directory down')
+    }],
+  ]
+  /** Runs `body` with `canManage` (or `canCheckout`) answering `answer`, then puts the site's rule back. */
+  const answering = async (key: 'canManage' | 'canCheckout', answer: () => unknown, body: () => Promise<void>) => {
+    const before = o()[key]
+    o()[key] = answer
+    try {
+      await body()
+    } finally {
+      o()[key] = before
+    }
+  }
+  const all = (collection: string) => payload.count({ collection: collection as never }).then((r) => r.totalDocs)
+  let manager: Doc
+  let tier: Doc
+  let category: Doc
+  let bobs: Doc
+
+  beforeAll(async () => {
+    manager = (await payload.find({ collection: 'users', where: { email: { equals: 'manager@example.org' } } })).docs[0] as Doc
+    tier = await payload.create({ collection: 'membership-tiers' as never, data: { name: 'Exact Tier', monthly: 700, stripeProduct: 'prod_exact_tier' } as never })
+    category = await payload.create({ collection: 'membership-categories' as never, data: { name: 'Exact Category', stripeProduct: 'prod_exact_cat' } as never })
+    bobs = (await myMembership(payload, String(bob.id)))!
+    await payload.update({ collection: 'memberships' as never, id: bobs.id, data: { notes: 'manager-only note' } as never })
+  })
+
+  it('refuses collection and field access to anything but true, and never widens reads to every row', async () => {
+    const as = (u: Doc) => ({ overrideAccess: false, user: asUser(u) })
+    const allMemberships = await all('memberships')
+    const allPayments = await all('membership-payments')
+    expect(allMemberships).toBeGreaterThan(1)
+    for (const [label, answer] of noes) {
+      await answering('canManage', answer, async () => {
+        for (const [collection, doc] of [['membership-tiers', tier], ['membership-categories', category]] as const) {
+          await expect(payload.create({ collection: collection as never, data: { name: 'Uninvited' } as never, ...as(manager) }), label).rejects.toThrow()
+          await expect(payload.update({ collection: collection as never, id: doc.id, data: { name: 'Changed' } as never, ...as(manager) }), label).rejects.toThrow()
+          await expect(payload.delete({ collection: collection as never, id: doc.id, ...as(manager) }), label).rejects.toThrow()
+          const seen = await payload.findByID({ collection: collection as never, id: doc.id, ...as(manager) })
+          expect(JSON.stringify(seen), label).not.toContain('prod_exact') // stripeProduct: managers only
+        }
+        // A member asked about: their own rows only, never every row, and no manager-only fields.
+        const mine = await payload.find({ collection: 'memberships' as never, pagination: false, ...as(bob) })
+        expect(mine.docs.length, label).toBeGreaterThan(0)
+        expect(mine.docs.length, label).toBeLessThan(allMemberships)
+        expect(mine.docs.every((d: Doc) => String(typeof d.user === 'object' ? d.user.id : d.user) === String(bob.id)), label).toBe(true)
+        expect(JSON.stringify(mine.docs), label).not.toContain('manager-only note')
+        expect(JSON.stringify(mine.docs), label).not.toContain('cus_')
+        expect((await payload.find({ collection: 'memberships' as never, ...as(manager) })).totalDocs, label).toBe(0)
+        const pays = await payload.find({ collection: 'membership-payments' as never, pagination: false, ...as(bob) })
+        expect(pays.docs.length, label).toBeLessThan(allPayments)
+        expect((await payload.find({ collection: 'membership-payments' as never, ...as(manager) })).totalDocs, label).toBe(0)
+        await expect(payload.update({ collection: 'memberships' as never, id: bobs.id, data: { notes: 'changed' } as never, ...as(manager) }), label).rejects.toThrow()
+        await expect(payload.delete({ collection: 'memberships' as never, id: bobs.id, ...as(manager) }), label).rejects.toThrow()
+        const pay = pays.docs[0] as Doc
+        await expect(payload.delete({ collection: 'membership-payments' as never, id: pay.id, ...as(manager) }), label).rejects.toThrow()
+      })
+    }
+    expect(await payload.findByID({ collection: 'membership-tiers' as never, id: tier.id })).toMatchObject({ name: 'Exact Tier' })
+    expect(await payload.findByID({ collection: 'membership-categories' as never, id: category.id })).toMatchObject({ name: 'Exact Category' })
+    expect(await payload.findByID({ collection: 'memberships' as never, id: bobs.id })).toMatchObject({ notes: 'manager-only note' })
+    expect(await all('memberships')).toBe(allMemberships)
+    expect(await all('membership-payments')).toBe(allPayments)
+    await answering('canManage', () => true, async () => {
+      expect((await payload.find({ collection: 'memberships' as never, ...as(manager) })).totalDocs).toBe(allMemberships)
+      expect((await payload.find({ collection: 'membership-payments' as never, ...as(manager) })).totalDocs).toBe(allPayments)
+      expect(JSON.stringify(await payload.findByID({ collection: 'membership-tiers' as never, id: tier.id, ...as(manager) }))).toContain('prod_exact_tier')
+      await expect(payload.update({ collection: 'memberships' as never, id: bobs.id, data: { notes: 'seen by a manager' } as never, ...as(manager) })).resolves.toMatchObject({ notes: 'seen by a manager' })
+      await expect(payload.update({ collection: 'membership-categories' as never, id: category.id, data: { name: 'Exact Category' } as never, ...as(manager) })).resolves.toBeTruthy()
+    })
+    // Not signed in is a no even when canManage says true.
+    await answering('canManage', () => true, async () => {
+      await expect(payload.create({ collection: 'membership-tiers' as never, data: { name: 'Uninvited' } as never, overrideAccess: false }), 'signed out').rejects.toThrow()
+    })
+  })
+
+  it("answers a manager's member endpoints with 404 for anything but true, never a 500, without calling Stripe", async () => {
+    for (const [label, answer] of noes) {
+      await answering('canManage', answer, async () => {
+        const before = calls.length
+        for (const path of ['/:id/change', '/:id/cancel', '/:id/portal', '/:id/wall']) {
+          const res = await hit(path, manager, { id: String(bobs.id), body: { tier: String(friend.id), show: true, name: 'Hijack' } })
+          expect(res.status, `${label} ${path}`).toBe(404)
+        }
+        expect(calls.length, label).toBe(before)
+      })
+    }
+    expect(((await payload.findByID({ collection: 'memberships' as never, id: bobs.id })) as Doc).wall?.name).not.toBe('Hijack')
+    await answering('canManage', () => true, async () => {
+      expect((await hit('/:id/portal', manager, { id: String(bobs.id) })).status).toBe(200)
+    })
+  })
+
+  it('starts no checkout unless canCheckout answers exactly true: 503, never a 500', async () => {
+    const zed = await payload.create({ collection: 'users', data: { email: 'zed@example.org', password: 'a-long-password' } as never })
+    const memberships = await all('memberships')
+    for (const [label, answer] of noes) {
+      await answering('canCheckout', answer, async () => {
+        const before = calls.length
+        const res = await hit('/checkout', zed, { body: { tier: String(friend.id), interval: 'month' } })
+        expect(res.status, label).toBe(503)
+        expect(await res.json(), label).toEqual({ error: 'Memberships are not available here yet.' })
+        expect(calls.length, label).toBe(before)
+      })
+    }
+    expect(await all('memberships')).toBe(memberships)
+    await answering('canCheckout', () => true, async () => {
+      expect((await hit('/checkout', zed, { body: { tier: String(friend.id), interval: 'month' } })).status).toBe(200)
+    })
+  })
+})

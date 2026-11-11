@@ -1,5 +1,6 @@
 import { APIError, type CollectionSlug, type Payload, type Where } from 'payload'
 
+import { checkoutAllowed } from './access.js'
 import type { Interval, MembershipRecord, MembershipStatus, PaymentRecord, ResolvedMembership, StripeEvent, StripeLike, StripeSubscription } from './types.js'
 
 type Doc = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -77,7 +78,7 @@ export async function startCheckout(
   args: Choice & { user: Doc; successURL: string; cancelURL: string; scope?: string | null; wall?: { show?: boolean; name?: string | null } },
 ): Promise<{ url: string; membership: string }> {
   const o = membershipOf(payload)
-  if (o.canCheckout && !(await o.canCheckout({ payload }))) throw new APIError('Memberships are not available here yet.', 503, undefined, true)
+  if (!(await checkoutAllowed(o, payload))) throw new APIError('Memberships are not available here yet.', 503, undefined, true)
   const stripe = stripeOf(o)
   const scope = args.scope ?? null
   if (await currentMembership(payload, o, String(args.user.id), scope)) throw new APIError('You already have a membership: change it instead.', 409, undefined, true)
