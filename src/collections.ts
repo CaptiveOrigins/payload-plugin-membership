@@ -158,7 +158,25 @@ export function membershipsCollection(o: ResolvedMembership): CollectionConfig {
         fields: [
           { name: 'amount', type: 'number', required: true, min: 0, admin: { width: '33%', readOnly: true, description: 'Per interval, in cents.' } },
           { name: 'currency', type: 'text', required: true, admin: { width: '33%', readOnly: true } },
-          { name: 'totalPaid', type: 'number', defaultValue: 0, admin: { width: '34%', readOnly: true, description: 'All paid invoices, in cents.' } },
+          {
+            name: 'totalPaid',
+            type: 'number',
+            defaultValue: 0,
+            // Only invoice.paid changes it, with an atomic $inc. Payload saves the whole document,
+            // so an edit, a Stripe event or a hook saved at the same moment as an invoice would
+            // write back an older total: leave it out of every save (0 on create).
+            access: { create: () => false, update: () => false },
+            hooks: {
+              beforeChange: [
+                ({ operation, siblingData }) => {
+                  if (operation === 'create') return 0
+                  delete siblingData.totalPaid
+                  return undefined
+                },
+              ],
+            },
+            admin: { width: '34%', readOnly: true, description: 'All paid invoices, in cents.' },
+          },
         ],
       },
       {

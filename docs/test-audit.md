@@ -4,7 +4,7 @@ Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". 
 
 ## 2026-11-10: the two gaps left for the lead
 
-Suite before: 19 tests. After: 37. The fake Stripe moved to `test/fake-stripe.ts` so all three files share it. `@payloadcms/plugin-multi-tenant` is an exact-pinned devDependency at 3.92.1, the same as `payload`. No real Stripe calls.
+Suite before: 19 tests. After: 40. The fake Stripe moved to `test/fake-stripe.ts` so all three files share it. `@payloadcms/plugin-multi-tenant` is an exact-pinned devDependency at 3.92.1, the same as `payload`. No real Stripe calls.
 
 | Promise | Test |
 | --- | --- |
@@ -36,7 +36,7 @@ Mutation checks (back up, string replace, run, restore byte for byte): the site 
 ### Later the same day: two different invoices at once
 
 - **Fixed:** `totalPaid` was read-modify-write. With two different invoices paid at once, one delivery lost a Mongo write conflict and got a 500. Its payment was already recorded, so Stripe's retry was ignored, and the total, period and `onPayment` for that invoice never landed. Now `invoice.paid` adds with `$inc` through `payload.db.updateOne`, outside a transaction. Only the delivery whose conditional write flips the status fires `onStatusChange`. Test: `webhook-race.test.ts > two different invoices paid at once…` (five rounds; total 1200, both `onPayment`, one status change). Mutations caught 2 of 2: a plain set instead of `$inc`, and an unconditional status write.
-- **Not verified, for the lead:** other events (`customer.subscription.updated`, `checkout.session.completed`) still save through `payload.update`. If that writes the whole document, one arriving at the same moment as `invoice.paid` could write back an older `totalPaid`. There is no test for this yet.
+- **Fixed, same day:** `payload.update` saves the whole document, `totalPaid` included, so any other save (a subscription or checkout event, cancel, a staff edit or a hook) could write back an older total. The window is the moment between that save reading the document and writing it. Now a field `beforeChange` hook drops `totalPaid` from every update (it is 0 on create), and field access refuses API and admin writes. Only `invoice.paid`'s `$inc` changes it. Tests: `webhook-race.test.ts > a whole-document write held across an invoice…` (deterministic: a staff save without a transaction is held while an invoice lands) and `> only invoice.paid changes totalPaid…`. A third test sends subscription events and staff edits at the same moment as invoices (8 rounds). It passed before the fix too, because on a Mongo replica set the transaction turns the stale write into a write conflict. The held test is what proves the fix. Mutation: keeping `totalPaid` in saves was caught by 2 tests. Removing the field access was not caught, because the hook already drops the value; the access rule is a second guard.
 
 ## 2026-11-10: first audit
 

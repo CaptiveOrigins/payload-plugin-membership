@@ -19,12 +19,15 @@ const paid: PaymentRecord[] = []
 const statusChanges: string[] = []
 /** Makes the next payment write fail, as a database outage would. */
 let failNextPaymentWrite = false
+/** While set, writes made with `context.holdForTest` wait here. */
+let hold: Promise<void> | null = null
 
 async function deliver(e: Doc, signature = 'good') {
   const request = new Request('https://members.example.com/api/memberships/stripe-webhook', { method: 'POST', headers: { 'stripe-signature': signature, 'content-type': 'application/json' }, body: JSON.stringify(e) })
   const res = await handleEndpoints({ config: Promise.resolve(payload.config), payloadInstanceCacheKey: KEY, request } as never)
   return { status: res.status, body: (await res.json()) as Doc }
 }
+const o = () => payload.config.custom!.membership as Doc
 const get = (id: unknown) => payload.findByID({ collection: 'memberships' as never, id: id as string, depth: 0 }) as Promise<Doc>
 const paymentsFor = async (invoiceId: string) => (await payload.count({ collection: 'membership-payments' as never, where: { invoiceId: { equals: invoiceId } } })).totalDocs
 
@@ -64,6 +67,8 @@ beforeAll(async () => {
           onPayment: ({ payment }) => void paid.push(payment),
           onStatusChange: ({ membership, previous }) => void statusChanges.push(`${membership.id}:${previous}→${membership.status}`),
           overrides: {
+            // Holds a write between Payload reading the membership and saving it, when asked to.
+            memberships: (c) => ({ ...c, hooks: { ...c.hooks, beforeChange: [...(c.hooks?.beforeChange ?? []), async ({ data, context }) => (context.holdForTest && hold ? (await hold, data) : data)] } }),
             payments: (c) => ({
               ...c,
               hooks: {
@@ -146,6 +151,56 @@ describe('the same invoice webhook arriving twice at once', () => {
       expect(paid.slice(before).map((p) => p.amount).sort()).toEqual([500, 700])
       expect(statusChanges.slice(changes)).toEqual([`${membership}:incomplete→active`])
     }
+  })
+
+  it('subscription events and staff edits saved at the same moment as invoices never write back an older total', async () => {
+    const { membership, sub } = await member()
+    let expected = 0
+    for (let round = 0; round < 8; round++) {
+      const invoices = [300, 400, 500].map((amount, i) => (expected += amount, deliver(event('invoice.paid', { id: `in_mixed_${seq}_${round}_${i}`, subscription: sub, amount_paid: amount, currency: 'usd', created: 1_800_000_000 + round }))))
+      const others = [
+        deliver(event('customer.subscription.updated', { id: sub, status: 'active', cancel_at_period_end: round % 2 === 1, items: { data: [{ id: `si_${sub}`, current_period_end: 1_900_000_000 + round }] } })),
+        deliver(event('customer.subscription.updated', { id: sub, status: 'active', items: { data: [] } })),
+        payload.update({ collection: 'memberships' as never, id: membership, data: { notes: `Staff note ${round}` } as never }).then(() => ({ status: 200, body: {} }), () => ({ status: 500, body: {} })),
+      ]
+      const results = await Promise.all([...invoices, ...others])
+      // An invoice that loses a write conflict is retried by Stripe; the retry must count it once.
+      for (const [i, r] of results.slice(0, 3).entries())
+        if (r.status !== 200) expect((await deliver(event('invoice.paid', { id: `in_mixed_${seq}_${round}_${i}`, subscription: sub, amount_paid: [300, 400, 500][i], currency: 'usd', created: 1_800_000_000 + round }))).status).toBe(200)
+      expect((await get(membership)).totalPaid, `round ${round}`).toBe(expected)
+    }
+  })
+
+  it('a whole-document write held across an invoice (no transaction) doesn’t write back the older total', async () => {
+    const { membership, sub } = await member()
+    await deliver(invoice(`in_held_${seq}_1`, sub, 1_802_592_000))
+    let release!: () => void
+    hold = new Promise((r) => (release = r))
+    try {
+      // A staff edit reads the membership (totalPaid 500), then waits before saving.
+      const edit = payload.update({ collection: 'memberships' as never, id: membership, data: { notes: 'held edit' } as never, context: { holdForTest: true }, disableTransaction: true })
+      await new Promise((r) => setTimeout(r, 50))
+      expect((await deliver(invoice(`in_held_${seq}_2`, sub, 1_805_184_000))).body.result).toBe('handled')
+      release()
+      await edit
+    } finally {
+      hold = null
+    }
+    expect(await get(membership)).toMatchObject({ totalPaid: 1000, notes: 'held edit' })
+  })
+
+  it('only invoice.paid changes totalPaid: API, staff and server writes leave it alone', async () => {
+    const { membership, sub } = await member()
+    await deliver(invoice(`in_ro_${seq}`, sub, 1_802_592_000))
+    const admin = (await payload.create({ collection: 'users', data: { email: `staff-${seq}@example.com`, password: 'a-made-up-test-password' } as never })) as Doc
+    o().canManage = () => true
+    try {
+      await payload.update({ collection: 'memberships' as never, id: membership, data: { totalPaid: 999_999, notes: 'edited' } as never, overrideAccess: false, user: { ...admin, collection: 'users' } as never })
+    } finally {
+      o().canManage = () => false
+    }
+    await payload.update({ collection: 'memberships' as never, id: membership, data: { totalPaid: 0 } as never })
+    expect(await get(membership)).toMatchObject({ totalPaid: 500, notes: 'edited' })
   })
 
   it('a payment that fails to save for another reason is refused for Stripe to retry, not dropped', async () => {
