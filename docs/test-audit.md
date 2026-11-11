@@ -4,7 +4,7 @@ Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". 
 
 ## 2026-11-10: the two gaps left for the lead
 
-Suite before: 19 tests. After: 36. The fake Stripe moved to `test/fake-stripe.ts` so all three files share it. `@payloadcms/plugin-multi-tenant` is an exact-pinned devDependency at 3.92.1, the same as `payload`. No real Stripe calls.
+Suite before: 19 tests. After: 37. The fake Stripe moved to `test/fake-stripe.ts` so all three files share it. `@payloadcms/plugin-multi-tenant` is an exact-pinned devDependency at 3.92.1, the same as `payload`. No real Stripe calls.
 
 | Promise | Test |
 | --- | --- |
@@ -32,11 +32,11 @@ Mutation checks (back up, string replace, run, restore byte for byte): the site 
 
 - Anonymous reads of tiers and categories still list every site. They're public catalog data with Stripe ids hidden, and the host filters by site. This is the tenant plugin's behavior for signed-out readers, not member data.
 - `startCheckout` reuses the member's newest Stripe customer from any site. It is the same person and the same Stripe account, so nobody else's data is involved. Left as is.
-- Two *different* invoices for one membership at the same moment could each read `totalPaid` before the other writes it. The payments ledger stays correct, but the running total could lag. This is not the same-invoice race asked about. It's on the lead's list below.
 
-### For the lead
+### Later the same day: two different invoices at once
 
-- `totalPaid` is read-modify-write. Two different invoices paid at the same moment could lose one addition, though the ledger keeps both. An atomic `$inc`, or summing the ledger, would close it.
+- **Fixed:** `totalPaid` was read-modify-write. With two different invoices paid at once, one delivery lost a Mongo write conflict and got a 500. Its payment was already recorded, so Stripe's retry was ignored, and the total, period and `onPayment` for that invoice never landed. Now `invoice.paid` adds with `$inc` through `payload.db.updateOne`, outside a transaction. Only the delivery whose conditional write flips the status fires `onStatusChange`. Test: `webhook-race.test.ts > two different invoices paid at once…` (five rounds; total 1200, both `onPayment`, one status change). Mutations caught 2 of 2: a plain set instead of `$inc`, and an unconditional status write.
+- **Not verified, for the lead:** other events (`customer.subscription.updated`, `checkout.session.completed`) still save through `payload.update`. If that writes the whole document, one arriving at the same moment as `invoice.paid` could write back an older `totalPaid`. There is no test for this yet.
 
 ## 2026-11-10: first audit
 

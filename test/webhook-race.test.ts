@@ -133,6 +133,21 @@ describe('the same invoice webhook arriving twice at once', () => {
     expect(await get(membership)).toMatchObject({ totalPaid: 1000, currentPeriodEnd: new Date(1_805_184_000 * 1000).toISOString() })
   })
 
+  it('two different invoices paid at once both count toward totalPaid', async () => {
+    for (let round = 0; round < 5; round++) {
+      const { membership, sub } = await member()
+      const before = paid.length
+      const changes = statusChanges.length
+      const e1 = event('invoice.paid', { id: `in_pair_${seq}_1`, subscription: sub, amount_paid: 500, currency: 'usd', created: 1_800_000_000 })
+      const e2 = event('invoice.paid', { id: `in_pair_${seq}_2`, subscription: sub, amount_paid: 700, currency: 'usd', created: 1_800_000_001 })
+      const results = await Promise.all([deliver(e1), deliver(e2)])
+      expect(results.map((r) => r.body.result), JSON.stringify(results)).toEqual(['handled', 'handled'])
+      expect((await get(membership)).totalPaid).toBe(1200)
+      expect(paid.slice(before).map((p) => p.amount).sort()).toEqual([500, 700])
+      expect(statusChanges.slice(changes)).toEqual([`${membership}:incomplete→active`])
+    }
+  })
+
   it('a payment that fails to save for another reason is refused for Stripe to retry, not dropped', async () => {
     const { membership, sub } = await member()
     const e = invoice(`in_outage_${seq}`, sub, 1_802_592_000)

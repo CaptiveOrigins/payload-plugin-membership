@@ -238,11 +238,20 @@ export async function handleStripeEvent(payload: Payload, event: StripeEvent): P
         throw err // anything else (or the other copy not committed yet): fail, so Stripe retries
       }
       const periodEnd = obj.lines?.data?.[0]?.period?.end as number | undefined
-      const updated = await setMembership(payload, o, m, {
-        status: 'active',
-        totalPaid: (m.totalPaid ?? 0) + obj.amount_paid,
-        ...(periodEnd ? { currentPeriodEnd: new Date(periodEnd * 1000).toISOString() } : {}),
+      // Atomic writes outside a transaction, so two invoices paid at once both count: the total
+      // goes up with $inc, and only the delivery that actually flips the status reports it.
+      const memberships = o.memberships as CollectionSlug
+      await payload.db.updateOne({
+        collection: memberships,
+        id: m.id,
+        data: { totalPaid: { $inc: obj.amount_paid }, ...(periodEnd ? { currentPeriodEnd: new Date(periodEnd * 1000).toISOString() } : {}) } as never,
+        returning: false,
       })
+      const activated =
+        m.status !== 'active' &&
+        (await payload.db.updateOne({ collection: memberships, where: { and: [{ id: { equals: m.id } }, { status: { not_equals: 'active' } }] }, data: { status: 'active' } as never }))
+      const updated = (await payload.findByID({ collection: memberships, id: m.id, depth: 0, overrideAccess: true })) as Doc
+      if (activated && o.onStatusChange) await o.onStatusChange({ payload, membership: recordOf(updated), previous: m.status ?? null })
       if (o.onPayment)
         await o.onPayment({
           payload,
