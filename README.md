@@ -15,7 +15,7 @@ Patreon, or let members support **categories** with **their own amount** — or 
   invoice: award perks, votes, credits, receipts.
 - **Backers wall**: opt-in only, with the name the member chooses; listed under their tier or under each
   category they support, **A–Z within each group**.
-- **Works with** [`@captiveorigins/payload-plugin-sponsors`](https://www.npmjs.com/package/@captiveorigins/payload-plugin-sponsors):
+- **Works with** [`@extantape/payload-plugin-sponsors`](https://www.npmjs.com/package/@extantape/payload-plugin-sponsors):
   mark a tier "Members are listed as sponsors" and call `upsertListing`/`retireListing` from `onStatusChange`.
 
 ## On its own, and with others
@@ -24,8 +24,8 @@ Patreon, or let members support **categories** with **their own amount** — or 
 
 **Works with:**
 
-- **Sponsors** (`@captiveorigins/payload-plugin-sponsors`): tick "Members are listed as sponsors" on a tier, and call Sponsors' `upsertListing()` and `retireListing()` from `onStatusChange`. Your site makes the call; neither plugin imports the other.
-- **Roadmap** (`@captiveorigins/payload-plugin-roadmap`): Roadmap's extra votes come from a number your site works out (`allocation.earned`), and a membership can be where they come from. There's no adapter for this. It's a few lines of your own code.
+- **Sponsors** (`@extantape/payload-plugin-sponsors`): tick "Members are listed as sponsors" on a tier, and call Sponsors' `upsertListing()` and `retireListing()` from `onStatusChange`. Your site makes the call; neither plugin imports the other.
+- **Roadmap** (`@extantape/payload-plugin-roadmap`): Roadmap's extra votes come from a number your site works out (`allocation.earned`), and a membership can be where they come from. There's no adapter for this. It's a few lines of your own code.
 - **Multi-tenant** (`@payloadcms/plugin-multi-tenant`): set `scopeField` and `scopeOf`, and each site has its own tiers and members. The member endpoints answer only for the site `scopeOf` names: another site's membership, or a request from a site `scopeOf` doesn't know, gets a 404, and so does a request where `scopeOf` throws (only the error's name is logged). Managers also need the collection's read access, so the tenant plugin's rules apply to them. Pass `scope` to `getBackers`, or it lists every site.
 
 **Family.** Membership is in the Patronage family, with Sponsors, Backing, Credits, Printify and Roadmap. Backing and Credits are named but not built yet, and the families are a working draft that may change.
@@ -33,11 +33,11 @@ Patreon, or let members support **categories** with **their own amount** — or 
 ## Install
 
 ```bash
-npm install @captiveorigins/payload-plugin-membership
+npm install @extantape/payload-plugin-membership
 ```
 
 ```ts
-import { membershipPlugin } from '@captiveorigins/payload-plugin-membership'
+import { membershipPlugin } from '@extantape/payload-plugin-membership'
 
 export default buildConfig({
   plugins: [
