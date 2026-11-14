@@ -294,7 +294,7 @@ export type BackerGroup<T> = { group: T; backers: Backer[] }
 /**
  * The backers wall: active members who chose to be shown, under their tier or
  * under each category they support, A–Z within each (user decision for
- * Captive Origins). Groups follow the admin's (drag-and-drop) order.
+ * the original site). Groups follow the admin's (drag-and-drop) order.
  */
 export async function getBackers(payload: Payload, opts: { scope?: string | null; locale?: string } = {}): Promise<{ tiers: BackerGroup<Doc>[]; categories: BackerGroup<Doc>[] }> {
   const o = membershipOf(payload)

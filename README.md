@@ -20,7 +20,7 @@ Patreon, or let members support **categories** with **their own amount** — or 
 
 ## On its own, and with others
 
-**On its own.** Membership needs a Stripe account (a secret key and a webhook) and an auth collection for members. It doesn't import any other Captive Origins plugin. Perks, votes and credits are whatever your own `onPayment` and `onStatusChange` do.
+**On its own.** Membership needs a Stripe account (a secret key and a webhook) and an auth collection for members. It doesn't import any other plugin. Perks, votes and credits are whatever your own `onPayment` and `onStatusChange` do.
 
 **Works with:**
 
